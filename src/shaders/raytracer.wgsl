@@ -159,8 +159,30 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
   var trianglesCount = i32(uniforms[22]);
   var meshCount = i32(uniforms[27]);
 
-  var record = hit_record(RAY_TMAX, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
-  var closest = record;
+  var closest = hit_record(max, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
+
+
+  for (var i = 0; i < spheresCount; i++){
+
+    var record = hit_record(max, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
+
+    var curr_sphere = spheresb[i];
+
+    hit_sphere(curr_sphere.transform.xyz, curr_sphere.transform.w, r, record, max);
+
+    if (!record.hit_anything) {
+      continue
+    }
+
+    var d = record.t;
+
+    if (d < closest.t) {
+      closest = record;
+      closest.object_color = curr_sphere.color;
+      closest.object_material = curr_sphere.material;
+    }
+
+  }
 
   return closest;
 }
@@ -198,6 +220,9 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
 
   for (var j = 0; j < maxbounces; j = j + 1)
   {
+    var record = check_ray_collision(r, RAY_TMAX);
+
+
 
   }
 

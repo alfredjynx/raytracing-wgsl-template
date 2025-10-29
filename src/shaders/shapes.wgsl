@@ -1,6 +1,49 @@
 fn hit_sphere(center: vec3f, radius: f32, r: ray, record: ptr<function, hit_record>, max: f32)
 {
 
+  var  d = r.direction;
+  
+  var  A = r.origin;
+
+  var e = A - center;
+
+  var a  = dot(d, d);
+
+  var b = 2 * dot(d, e);
+
+  var c = dot(e, e) - radius * radius;
+
+  var delta = b * b - 4 * a * c;
+
+  if (delta < 0.0)  {
+    record.hit_anything = false;
+    return;
+  }
+
+  var sqrt_delta = sqrt(delta);
+
+  var t1 = (-b - sqrt_delta) / (2.0 * a);
+  var t2 = (-b + sqrt_delta) / (2.0 * a);
+
+  var t = t1;
+
+  if (t1 < t2) {
+    t = t1;
+  } else {
+    t = t2;
+  }
+
+  if (t > max) {
+    record.hit_anything = false;
+    return;
+  }
+
+
+  record.t = t;  
+  record.p = ray_at(r, t);
+  record.normal = (record.p - center) / radius;
+  record.hit_anything = true;
+
 }
 
 fn hit_quad(r: ray, Q: vec4f, u: vec4f, v: vec4f, record: ptr<function, hit_record>, max: f32)
