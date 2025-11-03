@@ -233,7 +233,7 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
 
     if (!record.hit_anything){
 
-      light = light + envoriment_color(r_.direction, backgroundcolor1, backgroundcolor2) * color.xyz;
+      light = envoriment_color(r_.direction, backgroundcolor1, backgroundcolor2) * color.xyz;
       break;
     }
 
@@ -243,14 +243,11 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
     var material = record.object_material;
 
     var behaviour = lambertian(record.normal, material.y, random_sphere, rng_state);
-
     
-    r_ = ray(behaviour.direction, record.p);
+    r_ = ray(record.p, behaviour.direction);
 
     color = color * record.object_color;
-    // Usar quando o objeto for emissivo
-    // light = light + color.xyz;
-
+  
   }
 
   return light;
@@ -282,13 +279,19 @@ fn render(@builtin(global_invocation_id) id : vec3u)
     // Steps:
     // 1. Loop for each sample per pixel
     // 2. Get ray
-    var ray = get_ray(cam, uv, &rng_state);
 
-    // 3. Call trace function
-    var light = trace(ray, &rng_state);
+    var n = 50.;
+
+    for (var i = 0.; i < n; i = i+1.) {
+      var ray = get_ray(cam, uv, &rng_state);
+
+      // 3. Call trace function
+      var light = trace(ray, &rng_state);
+      color = color + light;
+    }
 
     // 4. Average the color
-    color = light;
+    color = color / n;
 
     var color_out = vec4(linear_to_gamma(color), 1.0);
     var map_fb = mapfb(id.xy, rez);
