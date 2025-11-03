@@ -247,7 +247,29 @@ fn metal(normal : vec3f, direction: vec3f, fuzz: f32, random_sphere: vec3f) -> m
 
 fn dielectric(normal : vec3f, r_direction: vec3f, refraction_index: f32, frontface: bool, random_sphere: vec3f, fuzz: f32, rng_state: ptr<function, u32>) -> material_behaviour
 {  
-  return material_behaviour(false, vec3f(0.0));
+  var cos_theta = dot(-1.0 * r_direction, normal);
+  var sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+
+  var sin_theta_prime = (f32(frontface) * (1.0 / refraction_index) + f32(!frontface) * refraction_index) * sin_theta;
+
+  if (sin_theta_prime > 1.0) {
+    return metal(normal, r_direction, fuzz, random_sphere);
+  }
+
+  var perpendicular_component = refraction_index * (1.0 / refraction_index) * (r_direction + cos_theta*normal);
+  var parallel_component = -sqrt(1.0 - dot(perpendicular_component, perpendicular_component)) * normal;
+
+  var refracted_ray = perpendicular_component + parallel_component;
+
+  var r0 = pow((1.0 - refraction_index) / (1.0 + refraction_index), 2);
+  var reflexion_coefficient = r0 + (1.0 - r0) * pow(1.0 - cos_theta, 5);
+
+  var reflected_ray = reflect(r_direction, normal);
+
+  var cur_ray = mix(reflected_ray, refracted_ray, f32(rng_next_float(rng_state) > reflexion_coefficient));
+  cur_ray = normalize(cur_ray);
+  
+  return material_behaviour(true, cur_ray);
 }
 
 fn emmisive(color: vec3f, light: f32) -> material_behaviour
@@ -273,6 +295,7 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
       break;
     }
 
+    // Colisão do Raio
     var record = check_ray_collision(r_, RAY_TMAX);
     if (!record.hit_anything){
       light = envoriment_color(r_.direction, backgroundcolor1, backgroundcolor2) * color.xyz;
@@ -283,34 +306,39 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
     var material = record.object_material;
     var random_sphere = rng_next_vec3_in_unit_sphere(rng_state);
 
+    // Reflexão Especular: Alguns raios são refletidos e outros se espalham igual um material lambertiano
+    // Como fazer esse efeito? Specular probability > random()
     var specular_probability = material.z;
     var random_float = rng_next_float(rng_state);
     var smoothness = material.x;
     smoothness = smoothness * f32(random_float < specular_probability);
 
+    // Comportamentos do material
     var behaviour_lambert = lambertian(record.normal, material.y, random_sphere, rng_state);
     var behaviour_metal = metal(record.normal, r_.direction, material.y, random_sphere);
     var behaviour_emissive = emmisive(color.xyz, material.w);
     var behaviour_dielectric = dielectric(record.normal, r_.direction, material.z, record.frontface, random_sphere, material.y, rng_state);
 
-
-    // Material reflete o raio (não dielétrico)
+    var material_color = vec3(1.0);
+    // Material reflete o raio
     if (material.x >= 0.) {
       behaviour.direction = mix(behaviour_lambert.direction, behaviour_metal.direction, smoothness);
+      material_color = record.object_color.xyz + behaviour_emissive.direction.xyz * f32(material.w > 0);
     }
-    // Material reflete e refrata o raio (dielétrico)
+    // Material reflete ou refrata o raio (dielétrico)
     else {
       behaviour.direction = behaviour_dielectric.direction;
+      material_color = record.object_color.xyz;
     }
 
-    var material_color = record.object_color.xyz + behaviour_emissive.direction.xyz * f32(material.w > 0);
     color = color * material_color;
 
-    // Raio reflete dependendo do comportamento lambertiano e se o material é emissivo
+    // Raio reflete na próxima iteração dependendo do comportamento lambertiano e se o material é emissivo
     behaviour.scatter = behaviour_lambert.scatter && ! (material.w > 0);
 
     r_ = ray(record.p, behaviour.direction);
 
+    // Se o material for emissivo, adiciona a cor na luz, pois o raio não irá refletir
     if (material.w > 0) {
       light += color;
     }
@@ -344,11 +372,11 @@ fn render(@builtin(global_invocation_id) id : vec3u)
 
     // Steps:
     // 1. Loop for each sample per pixel
-    // 2. Get ray
 
     samples_per_pixel = 20;
 
     for (var i = 0; i < samples_per_pixel; i++) {
+      // 2. Get ray
       var ray = get_ray(cam, uv, &rng_state);
 
       // 3. Call trace function
