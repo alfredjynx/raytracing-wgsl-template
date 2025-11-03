@@ -159,29 +159,24 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
   var trianglesCount = i32(uniforms[22]);
   var meshCount = i32(uniforms[27]);
 
-  var closest = hit_record(max, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
+  var record = hit_record(max, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
 
+  var closest = record;
 
   for (var i = 0; i < spheresCount; i++){
 
-    var record = hit_record(max, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
-
     var curr_sphere = spheresb[i];
 
-    hit_sphere(curr_sphere.transform.xyz, curr_sphere.transform.w, r, record, max);
+    hit_sphere(curr_sphere.transform.xyz, curr_sphere.transform.w, r, &record, closest.t);
 
     if (!record.hit_anything) {
-      continue
+      continue;
     }
 
-    var d = record.t;
-
-    if (d < closest.t) {
-      closest = record;
-      closest.object_color = curr_sphere.color;
-      closest.object_material = curr_sphere.material;
-    }
-
+    closest = record;
+    closest.object_color = curr_sphere.color;
+    closest.object_material = curr_sphere.material;
+  
   }
 
   return closest;
@@ -189,7 +184,16 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
 
 fn lambertian(normal : vec3f, absorption: f32, random_sphere: vec3f, rng_state: ptr<function, u32>) -> material_behaviour
 {
-  return material_behaviour(true, vec3f(0.0));
+
+  var n = normalize(normal + random_sphere);
+
+  var rng = rng_next_float(rng_state);
+
+  // if (absorption < rng){
+  return material_behaviour(true, n);
+  // }
+
+  // return material_behaviour(false, vec3f(0.0));
 }
 
 fn metal(normal : vec3f, direction: vec3f, fuzz: f32, random_sphere: vec3f) -> material_behaviour
@@ -211,7 +215,7 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
 {
   var maxbounces = i32(uniforms[2]);
   var light = vec3f(0.0);
-  var color = vec3f(1.0);
+  var color = vec4f(1.0);
   var r_ = r;
   
   var backgroundcolor1 = int_to_rgb(i32(uniforms[11]));
@@ -220,9 +224,32 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
 
   for (var j = 0; j < maxbounces; j = j + 1)
   {
-    var record = check_ray_collision(r, RAY_TMAX);
+    
+    if (!behaviour.scatter){
+      break;
+    }
 
+    var record = check_ray_collision(r_, RAY_TMAX);
 
+    if (!record.hit_anything){
+
+      light = light + envoriment_color(r_.direction, backgroundcolor1, backgroundcolor2) * color.xyz;
+      break;
+    }
+
+    var random_sphere = rng_next_vec3_in_unit_sphere(rng_state);
+
+    // material vec4  - (smoothness, absorption, specular, light)
+    var material = record.object_material;
+
+    var behaviour = lambertian(record.normal, material.y, random_sphere, rng_state);
+
+    
+    r_ = ray(behaviour.direction, record.p);
+
+    color = color * record.object_color;
+    // Usar quando o objeto for emissivo
+    // light = light + color.xyz;
 
   }
 
@@ -255,8 +282,13 @@ fn render(@builtin(global_invocation_id) id : vec3u)
     // Steps:
     // 1. Loop for each sample per pixel
     // 2. Get ray
+    var ray = get_ray(cam, uv, &rng_state);
+
     // 3. Call trace function
+    var light = trace(ray, &rng_state);
+
     // 4. Average the color
+    color = light;
 
     var color_out = vec4(linear_to_gamma(color), 1.0);
     var map_fb = mapfb(id.xy, rez);

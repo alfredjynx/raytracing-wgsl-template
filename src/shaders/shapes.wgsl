@@ -1,9 +1,9 @@
 fn hit_sphere(center: vec3f, radius: f32, r: ray, record: ptr<function, hit_record>, max: f32)
 {
 
-  var  d = r.direction;
+  var d = r.direction;
   
-  var  A = r.origin;
+  var A = r.origin;
 
   var e = A - center;
 
@@ -27,13 +27,12 @@ fn hit_sphere(center: vec3f, radius: f32, r: ray, record: ptr<function, hit_reco
 
   var t = t1;
 
-  if (t1 < t2) {
-    t = t1;
-  } else {
+  if (t2 < t1) {
     t = t2;
-  }
+  } 
 
-  if (t > max) {
+  if (t < RAY_TMIN || t > max)
+  {
     record.hit_anything = false;
     return;
   }
@@ -41,6 +40,7 @@ fn hit_sphere(center: vec3f, radius: f32, r: ray, record: ptr<function, hit_reco
 
   record.t = t;  
   record.p = ray_at(r, t);
+  // record.frontface = dot()
   record.normal = (record.p - center) / radius;
   record.hit_anything = true;
 
