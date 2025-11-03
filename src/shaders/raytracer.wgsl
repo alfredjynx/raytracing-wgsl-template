@@ -189,16 +189,18 @@ fn lambertian(normal : vec3f, absorption: f32, random_sphere: vec3f, rng_state: 
 
   var rng = rng_next_float(rng_state);
 
-  // if (absorption < rng){
-  return material_behaviour(true, n);
-  // }
+  if (absorption < rng){
+    return material_behaviour(true, n);
+  }
 
-  // return material_behaviour(false, vec3f(0.0));
+  return material_behaviour(false, vec3f(0.0));
 }
 
 fn metal(normal : vec3f, direction: vec3f, fuzz: f32, random_sphere: vec3f) -> material_behaviour
 {
-  return material_behaviour(false, vec3f(0.0));
+  var n = normalize(normal + fuzz*random_sphere);
+
+  return material_behaviour(true, n);
 }
 
 fn dielectric(normal : vec3f, r_direction: vec3f, refraction_index: f32, frontface: bool, random_sphere: vec3f, fuzz: f32, rng_state: ptr<function, u32>) -> material_behaviour
@@ -242,11 +244,20 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
     // material vec4  - (smoothness, absorption, specular, light)
     var material = record.object_material;
 
-    var behaviour = lambertian(record.normal, material.y, random_sphere, rng_state);
-    
-    r_ = ray(record.p, behaviour.direction);
 
-    color = color * record.object_color;
+    if (material.x >= 0.) {
+
+      var behaviour_lambert = lambertian(record.normal, material.y, random_sphere, rng_state);
+      var behaviour_metal = metal(record.normal, behaviour_lambert.direction, material.y, random_sphere);
+
+      r_ = ray(record.p, mix(behaviour_lambert.direction, behaviour_metal.direction, material.x));
+
+      color = color * record.object_color;
+
+    }
+
+
+
   
   }
 
