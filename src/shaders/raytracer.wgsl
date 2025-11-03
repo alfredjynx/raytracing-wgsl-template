@@ -283,6 +283,11 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
     var material = record.object_material;
     var random_sphere = rng_next_vec3_in_unit_sphere(rng_state);
 
+    var specular_probability = material.z;
+    var random_float = rng_next_float(rng_state);
+    var smoothness = material.x;
+    smoothness = smoothness * f32(random_float < specular_probability);
+
     var behaviour_lambert = lambertian(record.normal, material.y, random_sphere, rng_state);
     var behaviour_metal = metal(record.normal, r_.direction, material.y, random_sphere);
     var behaviour_emissive = emmisive(color.xyz, material.w);
@@ -291,14 +296,15 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
 
     // Material reflete o raio (não dielétrico)
     if (material.x >= 0.) {
-      behaviour.direction = mix(behaviour_lambert.direction, behaviour_metal.direction, material.x);
+      behaviour.direction = mix(behaviour_lambert.direction, behaviour_metal.direction, smoothness);
     }
     // Material reflete e refrata o raio (dielétrico)
     else {
       behaviour.direction = behaviour_dielectric.direction;
     }
 
-    color = color * (record.object_color.xyz + behaviour_emissive.direction.xyz * f32(material.w > 0));
+    var material_color = record.object_color.xyz + behaviour_emissive.direction.xyz * f32(material.w > 0);
+    color = color * material_color;
 
     // Raio reflete dependendo do comportamento lambertiano e se o material é emissivo
     behaviour.scatter = behaviour_lambert.scatter && ! (material.w > 0);
