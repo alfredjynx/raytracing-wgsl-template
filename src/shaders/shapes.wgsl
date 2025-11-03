@@ -42,11 +42,6 @@ fn hit_sphere(center: vec3f, radius: f32, r: ray, record: ptr<function, hit_reco
   record.normal = (record.p - center) / radius;
 
   record.frontface = dot(record.normal, r.direction) < 0.0;
-
-  if (!record.frontface) {
-    record.normal = -record.normal;
-  }
-
   record.hit_anything = true;
 }
 

@@ -163,7 +163,7 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
 
   var closest = record;
 
-  for (var i = 0; i < spheresCount; i++){
+  for (var i = 0; i < spheresCount; i++) {
 
     var curr_sphere = spheresb[i];
 
@@ -176,7 +176,49 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
     closest = record;
     closest.object_color = curr_sphere.color;
     closest.object_material = curr_sphere.material;
-  
+  }
+
+  for (var i = 0; i < quadsCount; i++) {
+
+    var curr_quad = quadsb[i];
+
+    hit_quad(r, curr_quad.Q, curr_quad.u, curr_quad.v, &record, closest.t);
+
+    if (!record.hit_anything) {
+      continue;
+    }
+
+    closest = record;
+    closest.object_color = curr_quad.color;
+    closest.object_material = curr_quad.material;
+  }
+
+  for (var i = 0; i < boxesCount; i++) {
+
+    var curr_box = boxesb[i];
+
+    hit_box(r, curr_box.center.xyz, curr_box.radius.xyz, &record, closest.t);
+
+    if (!record.hit_anything) {
+      continue;
+    }
+
+    closest = record;
+    closest.object_color = curr_box.color;
+    closest.object_material = curr_box.material;
+  }
+
+  for (var i = 0; i < trianglesCount; i++) {
+
+    var curr_tri = trianglesb[i];
+
+    hit_triangle(r, curr_tri.v0.xyz, curr_tri.v1.xyz, curr_tri.v2.xyz, &record, closest.t);
+
+    if (!record.hit_anything) {
+      continue;
+    }
+
+    closest = record;
   }
 
   return closest;
@@ -198,8 +240,8 @@ fn lambertian(normal : vec3f, absorption: f32, random_sphere: vec3f, rng_state: 
 
 fn metal(normal : vec3f, direction: vec3f, fuzz: f32, random_sphere: vec3f) -> material_behaviour
 {
-  var n = normalize(normal + fuzz*random_sphere);
-
+  var reflected = reflect(direction, normal);
+  var n = normalize(reflected + fuzz*random_sphere);
   return material_behaviour(true, n);
 }
 
@@ -210,14 +252,14 @@ fn dielectric(normal : vec3f, r_direction: vec3f, refraction_index: f32, frontfa
 
 fn emmisive(color: vec3f, light: f32) -> material_behaviour
 {
-  return material_behaviour(false, vec3f(0.0));
+  return material_behaviour(false, color*light);
 }
 
 fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
 {
   var maxbounces = i32(uniforms[2]);
   var light = vec3f(0.0);
-  var color = vec4f(1.0);
+  var color = vec3f(1.0);
   var r_ = r;
   
   var backgroundcolor1 = int_to_rgb(i32(uniforms[11]));
@@ -226,39 +268,46 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
 
   for (var j = 0; j < maxbounces; j = j + 1)
   {
-    
+    // Finaliza o loop se o material não reflete o raio
     if (!behaviour.scatter){
       break;
     }
 
     var record = check_ray_collision(r_, RAY_TMAX);
-
     if (!record.hit_anything){
-
       light = envoriment_color(r_.direction, backgroundcolor1, backgroundcolor2) * color.xyz;
       break;
     }
 
-    var random_sphere = rng_next_vec3_in_unit_sphere(rng_state);
-
     // material vec4  - (smoothness, absorption, specular, light)
     var material = record.object_material;
+    var random_sphere = rng_next_vec3_in_unit_sphere(rng_state);
+
+    var behaviour_lambert = lambertian(record.normal, material.y, random_sphere, rng_state);
+    var behaviour_metal = metal(record.normal, r_.direction, material.y, random_sphere);
+    var behaviour_emissive = emmisive(color.xyz, material.w);
+    var behaviour_dielectric = dielectric(record.normal, r_.direction, material.z, record.frontface, random_sphere, material.y, rng_state);
 
 
+    // Material reflete o raio (não dielétrico)
     if (material.x >= 0.) {
-
-      var behaviour_lambert = lambertian(record.normal, material.y, random_sphere, rng_state);
-      var behaviour_metal = metal(record.normal, behaviour_lambert.direction, material.y, random_sphere);
-
-      r_ = ray(record.p, mix(behaviour_lambert.direction, behaviour_metal.direction, material.x));
-
-      color = color * record.object_color;
-
+      behaviour.direction = mix(behaviour_lambert.direction, behaviour_metal.direction, material.x);
+    }
+    // Material reflete e refrata o raio (dielétrico)
+    else {
+      behaviour.direction = behaviour_dielectric.direction;
     }
 
+    color = color * (record.object_color.xyz + behaviour_emissive.direction.xyz * f32(material.w > 0));
 
+    // Raio reflete dependendo do comportamento lambertiano e se o material é emissivo
+    behaviour.scatter = behaviour_lambert.scatter && ! (material.w > 0);
 
-  
+    r_ = ray(record.p, behaviour.direction);
+
+    if (material.w > 0) {
+      light += color;
+    }
   }
 
   return light;
@@ -291,9 +340,9 @@ fn render(@builtin(global_invocation_id) id : vec3u)
     // 1. Loop for each sample per pixel
     // 2. Get ray
 
-    var n = 50.;
+    samples_per_pixel = 20;
 
-    for (var i = 0.; i < n; i = i+1.) {
+    for (var i = 0; i < samples_per_pixel; i++) {
       var ray = get_ray(cam, uv, &rng_state);
 
       // 3. Call trace function
@@ -302,7 +351,7 @@ fn render(@builtin(global_invocation_id) id : vec3u)
     }
 
     // 4. Average the color
-    color = color / n;
+    color = color / f32(samples_per_pixel);
 
     var color_out = vec4(linear_to_gamma(color), 1.0);
     var map_fb = mapfb(id.xy, rez);
@@ -310,7 +359,11 @@ fn render(@builtin(global_invocation_id) id : vec3u)
     // 5. Accumulate the color
     var should_accumulate = uniforms[3];
 
+    var accumulated_color = rtfb[map_fb] *
+      should_accumulate + color_out;
+    var w = accumulated_color.w;
+
     // Set the color to the framebuffer
-    rtfb[map_fb] = color_out;
-    fb[map_fb] = color_out;
+    rtfb[map_fb] = accumulated_color;
+    fb[map_fb] = accumulated_color / w;
 }

@@ -34,7 +34,7 @@ const uniforms = {
     rez: 768, // 1
     maxBounces: 10, // 2
     shouldAccumulate: 1, // 3
-    samplesPerPixel: 1, // 4
+    samplesPerPixel: 20, // 4
     focusDistance: 5.0, // 5
     focusAngle: 0.2, // 6
     camerax: 0, // 7
