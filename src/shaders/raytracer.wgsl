@@ -235,7 +235,7 @@ fn lambertian(normal : vec3f, absorption: f32, random_sphere: vec3f, rng_state: 
     return material_behaviour(true, n);
   }
 
-  return material_behaviour(false, vec3f(0.0));
+  return material_behaviour(false, n);
 }
 
 fn metal(normal : vec3f, direction: vec3f, fuzz: f32, random_sphere: vec3f) -> material_behaviour
@@ -247,29 +247,67 @@ fn metal(normal : vec3f, direction: vec3f, fuzz: f32, random_sphere: vec3f) -> m
 
 fn dielectric(normal : vec3f, r_direction: vec3f, refraction_index: f32, frontface: bool, random_sphere: vec3f, fuzz: f32, rng_state: ptr<function, u32>) -> material_behaviour
 {  
-  var cos_theta = dot(-1.0 * r_direction, normal);
-  var sin_theta = sqrt(1.0 - cos_theta * cos_theta);
 
-  var sin_theta_prime = (f32(frontface) * (1.0 / refraction_index) + f32(!frontface) * refraction_index) * sin_theta;
-
-  if (sin_theta_prime > 1.0) {
-    return metal(normal, r_direction, fuzz, random_sphere);
+  // Normal tem que ser oposta ao raio de incidencia
+  var n = normal;
+  if (!frontface) {
+    n = -n;
   }
 
-  var perpendicular_component = refraction_index * (1.0 / refraction_index) * (r_direction + cos_theta*normal);
-  var parallel_component = -sqrt(1.0 - dot(perpendicular_component, perpendicular_component)) * normal;
+  // direcao do raio
+  var v = normalize(r_direction);
 
-  var refracted_ray = perpendicular_component + parallel_component;
 
-  var r0 = pow((1.0 - refraction_index) / (1.0 + refraction_index), 2);
-  var reflexion_coefficient = r0 + (1.0 - r0) * pow(1.0 - cos_theta, 5);
+  // indice de refracao do objeto de onde o raio esta vindo
+  // eta
+  var n1: f32 = 1.0;
+  // indice de refracao do objeto dieletrico
+  // eta-linha
+  var n2: f32 = refraction_index;
 
-  var reflected_ray = reflect(r_direction, normal);
+  // Se nao for a frontface, inverte a ordem dos valores
+  if (!frontface) {
+    n1 = refraction_index;
+    n2 = 1.0;
+  }
 
-  var cur_ray = mix(reflected_ray, refracted_ray, f32(rng_next_float(rng_state) > reflexion_coefficient));
-  cur_ray = normalize(cur_ray);
-  
-  return material_behaviour(true, cur_ray);
+  // eta é a razão entre os dois indices de refração
+  var eta_ratio: f32 = n1 / n2;
+
+  // cosseno do angulo de incidencia
+  var cos_theta = clamp(dot(-v, n), 0.0, 1.0);
+
+  var r_perp = eta_ratio * (v + cos_theta * n);
+
+  var len2_perp = dot(r_perp, r_perp);
+
+  // k = 1 - |R_perp'|^2
+  var k = 1.0 - len2_perp;
+
+  if (k < 0.0) {
+    // espelho
+    var refl = reflect(v, n);
+    return material_behaviour(true, normalize(refl));
+  }
+
+  // R_par' = -sqrt(1 - |R_perp'|^2) * n
+  var r_par = -sqrt(k) * n;
+
+  // direção do raio refratadi
+  var refracted = normalize(r_perp + r_par);
+
+  var r0 = pow((n1 - n2) / (n1 + n2), 2.0);
+  var reflect_prob  = r0 + (1.0 - r0) * pow(1.0 - cos_theta, 5.0);
+
+  var reflected = reflect(v, n);
+  var out_dir = refracted;
+
+
+  if (rng_next_float(rng_state) <= reflect_prob) {
+    out_dir = reflected;
+  }
+
+  return material_behaviour(true, normalize(out_dir));
 }
 
 fn emmisive(color: vec3f, light: f32) -> material_behaviour
@@ -311,37 +349,45 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
     var specular_probability = material.z;
     var random_float = rng_next_float(rng_state);
     var smoothness = material.x;
-    smoothness = smoothness * f32(random_float < specular_probability);
+    var smoothness_luciano_soares = smoothness * f32(random_float < specular_probability);
 
     // Comportamentos do material
-    var behaviour_lambert = lambertian(record.normal, material.y, random_sphere, rng_state);
-    var behaviour_metal = metal(record.normal, r_.direction, material.y, random_sphere);
-    var behaviour_emissive = emmisive(color.xyz, material.w);
-    var behaviour_dielectric = dielectric(record.normal, r_.direction, material.z, record.frontface, random_sphere, material.y, rng_state);
 
     var material_color = vec3(1.0);
     // Material reflete o raio
     if (material.x >= 0.) {
-      behaviour.direction = mix(behaviour_lambert.direction, behaviour_metal.direction, smoothness);
-      material_color = record.object_color.xyz + behaviour_emissive.direction.xyz * f32(material.w > 0);
+
+      var behaviour_lambert = lambertian(record.normal, material.y, random_sphere, rng_state);
+      var behaviour_metal = metal(record.normal, r_.direction, material.y, random_sphere);
+      
+      behaviour.direction = mix(behaviour_lambert.direction, behaviour_metal.direction, smoothness_luciano_soares);
+      behaviour.scatter = bool(mix(f32(behaviour_lambert.scatter), f32(behaviour_metal.scatter), smoothness));
+      material_color = record.object_color.xyz;
     }
     // Material reflete ou refrata o raio (dielétrico)
     else {
+      
+      var behaviour_emissive = emmisive(color.xyz, material.w);
+      var behaviour_dielectric = dielectric(record.normal, r_.direction, material.z, record.frontface, random_sphere, material.y, rng_state);
+      
+      behaviour.scatter = true;
       behaviour.direction = behaviour_dielectric.direction;
       material_color = record.object_color.xyz;
     }
 
+    // Se o material for emissivo, adiciona a cor na luz, pois o raio não irá refletir
+    if (material.w > 0.) {
+        // Add emissive contribution once and stop bouncing
+        light += color * record.object_color.xyz * material.w;
+        break;
+    }
+
+
     color = color * material_color;
 
-    // Raio reflete na próxima iteração dependendo do comportamento lambertiano e se o material é emissivo
-    behaviour.scatter = behaviour_lambert.scatter && ! (material.w > 0);
 
     r_ = ray(record.p, behaviour.direction);
 
-    // Se o material for emissivo, adiciona a cor na luz, pois o raio não irá refletir
-    if (material.w > 0) {
-      light += color;
-    }
   }
 
   return light;
