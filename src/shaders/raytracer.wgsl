@@ -151,6 +151,16 @@ fn envoriment_color(direction: vec3f, color1: vec3f, color2: vec3f) -> vec3f
   return col;
 }
 
+fn quat_rotate(v: vec3<f32>, q_in: vec4<f32>) -> vec3<f32> {
+    let q = q_in / max(length(q_in), 1e-8);
+    let u = q.xyz;
+    let s = q.w;
+
+    return 2.0 * dot(u, v) * u +
+           (s * s - dot(u, u)) * v +
+           2.0 * s * cross(u, v);
+}
+
 fn check_ray_collision(r: ray, max: f32) -> hit_record
 {
   var spheresCount = i32(uniforms[19]);
@@ -208,17 +218,72 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
     closest.object_material = curr_box.material;
   }
 
+
+  //   struct mesh {
+  //   transform : vec4f,
+  //   scale : vec4f,
+  //   rotation : vec4f,
+  //   color : vec4f,
+  //   material : vec4f,
+  //   min : vec4f,
+  //   max : vec4f,
+  //   show_bb : f32,
+  //   start : f32,
+  //   end : f32,
+  // };
+
   for (var i = 0; i < trianglesCount; i++) {
 
-    var curr_tri = trianglesb[i];
+    var curr_mesh = meshb[i];
 
-    hit_triangle(r, curr_tri.v0.xyz, curr_tri.v1.xyz, curr_tri.v2.xyz, &record, closest.t);
+    var rot = curr_mesh.rotation.xyz;
+    let q = quaternion_from_euler(rot.xyz);
+    var transform = curr_mesh.transform.xyz;
+    var scale = curr_mesh.scale.xyz;
 
-    if (!record.hit_anything) {
-      continue;
+    var bound_min = quat_rotate(curr_mesh.min.xyz * scale, q) + transform;
+    var bound_max = quat_rotate(curr_mesh.max.xyz * scale, q) + transform;
+
+
+    var inside = AABB_intersect(r, bound_min, bound_max);
+    if (inside){
+      
+      var triangle_start = curr_mesh.start;
+      var triangle_end = curr_mesh.end;
+
+
+
+      var color = curr_mesh.color;
+      var material = curr_mesh.material;
+
+      for (var j = i32(triangle_start); j < i32(triangle_end); j++){
+
+        var curr_tri = trianglesb[j];
+
+
+        let v0_new = quat_rotate(curr_tri.v0.xyz * scale, q) + transform;
+        let v1_new = quat_rotate(curr_tri.v1.xyz * scale, q) + transform;
+        let v2_new = quat_rotate(curr_tri.v2.xyz * scale, q) + transform;
+
+        curr_tri.v0 = vec4f(v0_new, curr_tri.v0.w);
+        curr_tri.v1 = vec4f(v1_new, curr_tri.v1.w);
+        curr_tri.v2 = vec4f(v2_new, curr_tri.v2.w);
+
+        hit_triangle(r, curr_tri.v0.xyz, curr_tri.v1.xyz, curr_tri.v2.xyz, &record, closest.t);
+
+        if (!record.hit_anything) {
+          continue;
+        }
+
+        record.object_material = material;
+        record.object_color = color;
+
+        closest = record;
+      } 
+
+
     }
 
-    closest = record;
   }
 
   return closest;
@@ -378,7 +443,7 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
     // Se o material for emissivo, adiciona a cor na luz, pois o raio não irá refletir
     if (material.w > 0.) {
         // Add emissive contribution once and stop bouncing
-        light += color * record.object_color.xyz * material.w;
+        light += color * record.object_color.xyz;
         break;
     }
 
