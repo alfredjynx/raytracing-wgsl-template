@@ -26,6 +26,9 @@ const FRAC_2_PI = 1.5707964f;
 @group(2) @binding(3)
   var<storage, read_write> trianglesb : array<triangle>;
 
+@group(2) @binding(5)
+  var<storage, read_write> cylindersb : array<cylinder>;
+
 @group(2) @binding(4)
   var<storage, read_write> meshb : array<mesh>;
 
@@ -61,6 +64,23 @@ struct triangle {
   v1 : vec4f,
   v2 : vec4f,
 };
+
+
+
+
+struct cylinder {
+  transform : vec4f, 
+  axis      : vec4f, 
+  rotation  : vec4f, 
+  scale     : vec4f, 
+  color     : vec4f, 
+  material  : vec4f, 
+};
+
+
+
+
+
 
 struct mesh {
   transform : vec4f,
@@ -168,6 +188,8 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
   var boxesCount = i32(uniforms[21]);
   var trianglesCount = i32(uniforms[22]);
   var meshCount = i32(uniforms[27]);
+  var cylinderCount = i32(uniforms[28]);
+
 
   var record = hit_record(max, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
 
@@ -283,6 +305,51 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
 
 
     }
+
+
+
+    // Cylinder Hit
+    for (var i = 0; i < cylindersCount; i = i + 1) {
+
+      var cyl = cylindersb[i];
+
+      var rot = cyl.rotation.xyz;
+      let q = quaternion_from_euler(rot.xyz);
+      var transform = cyl.transform.xyz;
+      var scale = cyl.scale.xyz; 
+
+      let C_local = cyl.transform.xyz; 
+      let H_local = cyl.transform.w; 
+      let V_local = normalize(cyl.axis.xyz);
+      let R_local = cyl.axis.w;
+
+      let s = scale.x;
+      let C_world = quat_rotate(C_local * scale, q) + transform;
+      let V_world = normalize(quat_rotate(V_local, q));
+      let R_world = R_local * s;
+      let H_world = H_local * s;
+
+      let min_local = min(C_local, C_local + V_local * H_local) - vec3f(R_local);
+      let max_local = max(C_local, C_local + V_local * H_local) + vec3f(R_local);
+      let bound_min = quat_rotate(min_local * scale, q) + transform;
+      let bound_max = quat_rotate(max_local * scale, q) + transform;
+
+      let inside = AABB_intersect(r, bound_min, bound_max);
+      if (!inside) {
+          continue;
+      }
+
+      hit_cylinder(r, C_world, V_world, R_world, H_world, &record, closest.t);
+
+      if (!record.hit_anything) {
+          continue;
+      }
+
+      record.object_color = cyl.color;
+      record.object_material = cyl.material;
+      closest = record;
+  }
+
 
   }
 
