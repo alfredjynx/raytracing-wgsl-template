@@ -221,16 +221,14 @@ fn check_ray_collision(r: ray, maxDist: f32) -> hit_record
 
     var curr_box = boxesb[i];
 
+    var q = quaternion_from_euler(curr_box.rotation.xyz);
+    var q_inv = q_inverse(q);
+    var rotated_ray = rotate_ray_quaternion(r, curr_box.center.xyz, q);
+
     if (curr_box.radius.w == 0.0) {
-      hit_box(r, curr_box.center.xyz, curr_box.radius.xyz, &record, closest.t);
 
-      if (!record.hit_anything) {
-        continue;
-      }
+      hit_box(rotated_ray, curr_box.center.xyz, curr_box.radius.xyz, &record, closest.t);
 
-      closest = record;
-      closest.object_color = curr_box.color;
-      closest.object_material = curr_box.material;
     } else {
       var cyl = curr_box;
 
@@ -250,8 +248,8 @@ fn check_ray_collision(r: ray, maxDist: f32) -> hit_record
       let C_base = C_world - V_world * halfH;
 
       // --- Conservative AABB cull using both caps ---
-      let P0 = C_world - V_world * halfH; // bottom cap center
-      let P1 = C_world + V_world * halfH; // top cap center
+      let P0 = C_world - V_world * halfH;
+      let P1 = C_world + V_world * halfH;
       let r3 = vec3f(R_world);
 
       let bound_min = min(P0 - r3, P1 - r3);
@@ -263,15 +261,18 @@ fn check_ray_collision(r: ray, maxDist: f32) -> hit_record
 
       // --- Intersect cylinder (expects base-center) ---
       hit_cylinder(r, C_base, V_world, R_world, H_world, &record, closest.t);
-
-      if (!record.hit_anything) {
-        continue;
-      }
-
-      record.object_color    = cyl.color;
-      record.object_material = cyl.material;
-      closest = record;
     }
+
+    if (!record.hit_anything) {
+      continue;
+    }
+    
+    record.normal = rotate_vector(record.normal, q_inv);
+    record.p = rotate_vector(record.p - curr_box.center.xyz, q_inv) + curr_box.center.xyz;
+
+    closest = record;
+    closest.object_color = curr_box.color;
+    closest.object_material = curr_box.material;
   }
 
   for (var i = 0; i < trianglesCount; i++) {
@@ -522,7 +523,7 @@ fn render(@builtin(global_invocation_id) id : vec3u)
     // Steps:
     // 1. Loop for each sample per pixel
 
-    samples_per_pixel = 5;
+    samples_per_pixel = 10;
 
     for (var i = 0; i < samples_per_pixel; i++) {
       // 2. Get ray
