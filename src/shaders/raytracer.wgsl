@@ -460,8 +460,8 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
     var smoothness_luciano_soares = smoothness * f32(random_float < specular_probability);
 
     // Comportamentos do material
-
     var material_color = vec3(1.0);
+
     // Material reflete o raio
     if (material.x >= 0.) {
 
@@ -518,12 +518,12 @@ fn render(@builtin(global_invocation_id) id : vec3u)
     var cam = get_camera(lookfrom, lookat, vec3(0.0, 1.0, 0.0), uniforms[10], 1.0, uniforms[6], uniforms[5]);
     var samples_per_pixel = i32(uniforms[4]);
 
-    var color = vec3(rng_next_float(&rng_state), rng_next_float(&rng_state), rng_next_float(&rng_state));
+    var color = vec3(0.0);
 
     // Steps:
     // 1. Loop for each sample per pixel
 
-    samples_per_pixel = 10;
+    samples_per_pixel = 1;
 
     for (var i = 0; i < samples_per_pixel; i++) {
       // 2. Get ray
