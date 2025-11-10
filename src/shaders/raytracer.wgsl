@@ -65,9 +65,6 @@ struct triangle {
   v2 : vec4f,
 };
 
-
-
-
 struct cylinder {
   transform : vec4f, 
   axis      : vec4f, 
@@ -76,11 +73,6 @@ struct cylinder {
   color     : vec4f, 
   material  : vec4f, 
 };
-
-
-
-
-
 
 struct mesh {
   transform : vec4f,
@@ -181,7 +173,7 @@ fn quat_rotate(v: vec3<f32>, q_in: vec4<f32>) -> vec3<f32> {
            2.0 * s * cross(u, v);
 }
 
-fn check_ray_collision(r: ray, max: f32) -> hit_record
+fn check_ray_collision(r: ray, maxDist: f32) -> hit_record
 {
   var spheresCount = i32(uniforms[19]);
   var quadsCount = i32(uniforms[20]);
@@ -191,7 +183,7 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
   var cylinderCount = i32(uniforms[28]);
 
 
-  var record = hit_record(max, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
+  var record = hit_record(maxDist, vec3f(0.0), vec3f(0.0), vec4f(0.0), vec4f(0.0), false, false);
 
   var closest = record;
 
@@ -229,30 +221,58 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
 
     var curr_box = boxesb[i];
 
-    hit_box(r, curr_box.center.xyz, curr_box.radius.xyz, &record, closest.t);
+    if (curr_box.radius.w == 0.0) {
+      hit_box(r, curr_box.center.xyz, curr_box.radius.xyz, &record, closest.t);
 
-    if (!record.hit_anything) {
-      continue;
+      if (!record.hit_anything) {
+        continue;
+      }
+
+      closest = record;
+      closest.object_color = curr_box.color;
+      closest.object_material = curr_box.material;
+    } else {
+      var cyl = curr_box;
+
+      let C_world = cyl.center.xyz;
+      let halfH   = cyl.radius.y;
+      let H_world = 2.0 * halfH;
+      let R_world = cyl.radius.w;
+
+      // Axis: Y-up by default (unit length).
+      let rot = cyl.rotation.xyz;
+      let q   = quaternion_from_euler(rot);
+      // If you want rotated cylinders, uncomment this line and comment the next:
+      // let V_world = normalize(quat_rotate(vec3f(0.0, 1.0, 0.0), q));
+      let V_world = vec3f(0.0, 1.0, 0.0);
+
+      // *** Base-center (required by hit_cylinder) ***
+      let C_base = C_world - V_world * halfH;
+
+      // --- Conservative AABB cull using both caps ---
+      let P0 = C_world - V_world * halfH; // bottom cap center
+      let P1 = C_world + V_world * halfH; // top cap center
+      let r3 = vec3f(R_world);
+
+      let bound_min = min(P0 - r3, P1 - r3);
+      let bound_max = max(P0 + r3, P1 + r3);
+
+      if (!AABB_intersect(r, bound_min, bound_max)) {
+        continue;
+      }
+
+      // --- Intersect cylinder (expects base-center) ---
+      hit_cylinder(r, C_base, V_world, R_world, H_world, &record, closest.t);
+
+      if (!record.hit_anything) {
+        continue;
+      }
+
+      record.object_color    = cyl.color;
+      record.object_material = cyl.material;
+      closest = record;
     }
-
-    closest = record;
-    closest.object_color = curr_box.color;
-    closest.object_material = curr_box.material;
   }
-
-
-  //   struct mesh {
-  //   transform : vec4f,
-  //   scale : vec4f,
-  //   rotation : vec4f,
-  //   color : vec4f,
-  //   material : vec4f,
-  //   min : vec4f,
-  //   max : vec4f,
-  //   show_bb : f32,
-  //   start : f32,
-  //   end : f32,
-  // };
 
   for (var i = 0; i < trianglesCount; i++) {
 
@@ -305,51 +325,6 @@ fn check_ray_collision(r: ray, max: f32) -> hit_record
 
 
     }
-
-
-
-    // Cylinder Hit
-    for (var i = 0; i < cylindersCount; i = i + 1) {
-
-      var cyl = cylindersb[i];
-
-      var rot = cyl.rotation.xyz;
-      let q = quaternion_from_euler(rot.xyz);
-      var transform = cyl.transform.xyz;
-      var scale = cyl.scale.xyz; 
-
-      let C_local = cyl.transform.xyz; 
-      let H_local = cyl.transform.w; 
-      let V_local = normalize(cyl.axis.xyz);
-      let R_local = cyl.axis.w;
-
-      let s = scale.x;
-      let C_world = quat_rotate(C_local * scale, q) + transform;
-      let V_world = normalize(quat_rotate(V_local, q));
-      let R_world = R_local * s;
-      let H_world = H_local * s;
-
-      let min_local = min(C_local, C_local + V_local * H_local) - vec3f(R_local);
-      let max_local = max(C_local, C_local + V_local * H_local) + vec3f(R_local);
-      let bound_min = quat_rotate(min_local * scale, q) + transform;
-      let bound_max = quat_rotate(max_local * scale, q) + transform;
-
-      let inside = AABB_intersect(r, bound_min, bound_max);
-      if (!inside) {
-          continue;
-      }
-
-      hit_cylinder(r, C_world, V_world, R_world, H_world, &record, closest.t);
-
-      if (!record.hit_anything) {
-          continue;
-      }
-
-      record.object_color = cyl.color;
-      record.object_material = cyl.material;
-      closest = record;
-  }
-
 
   }
 
@@ -425,7 +400,7 @@ fn dielectric(normal : vec3f, r_direction: vec3f, refraction_index: f32, frontfa
   // R_par' = -sqrt(1 - |R_perp'|^2) * n
   var r_par = -sqrt(k) * n;
 
-  // direção do raio refratadi
+  // direção do raio refratado
   var refracted = normalize(r_perp + r_par);
 
   var r0 = pow((n1 - n2) / (n1 + n2), 2.0);
@@ -514,12 +489,8 @@ fn trace(r: ray, rng_state: ptr<function, u32>) -> vec3f
         break;
     }
 
-
     color = color * material_color;
-
-
     r_ = ray(record.p, behaviour.direction);
-
   }
 
   return light;
@@ -551,7 +522,7 @@ fn render(@builtin(global_invocation_id) id : vec3u)
     // Steps:
     // 1. Loop for each sample per pixel
 
-    samples_per_pixel = 20;
+    samples_per_pixel = 5;
 
     for (var i = 0; i < samples_per_pixel; i++) {
       // 2. Get ray
