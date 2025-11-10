@@ -523,7 +523,7 @@ fn render(@builtin(global_invocation_id) id : vec3u)
     // Steps:
     // 1. Loop for each sample per pixel
 
-    samples_per_pixel = 1;
+    samples_per_pixel = max(samples_per_pixel, 1);
 
     for (var i = 0; i < samples_per_pixel; i++) {
       // 2. Get ray
